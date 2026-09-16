@@ -28,31 +28,127 @@ static void rb_transplant(rbtree_t *t, rb_node_t *u, rb_node_t *v) {
     v->parent = u->parent;
 }
 
+static void rotate_left(rbtree_t *t, rb_node_t *x) {
+    rb_node_t *y = x->right;
+    x->right = y->left;
+    if (y->left != t->nil) y->left->parent = x;
+    y->parent = x->parent;
+    if (x->parent == t->nil) t->root = y;
+    else if (x == x->parent->left) x->parent->left = y;
+    else x->parent->right = y;
+    y->left = x;
+    x->parent = y;
+}
+
+static void rotate_right(rbtree_t *t, rb_node_t *x) {
+    rb_node_t *y = x->left;
+    x->left = y->right;
+    if (y->right != t->nil) y->right->parent = x;
+    y->parent = x->parent;
+    if (x->parent == t->nil) t->root = y;
+    else if (x == x->parent->right) x->parent->right = y;
+    else x->parent->left = y;
+    y->right = x;
+    x->parent = y;
+}
+
+static void rb_delete_fixup(rbtree_t *t, rb_node_t *x) {
+    /* invariant: every path through x is short exactly one black node;
+     * every other path already has the correct black-height */
+    while (x != t->root && x->color == RB_BLACK) {
+        if (x == x->parent->left) {
+            rb_node_t *w = x->parent->right;
+            if (w->color == RB_RED) {
+                w->color = RB_BLACK;
+                x->parent->color = RB_RED;
+                rotate_left(t, x->parent);
+                w = x->parent->right;
+            }
+            if (w->left->color == RB_BLACK && w->right->color == RB_BLACK) {
+                w->color = RB_RED;
+                x = x->parent;
+            } else {
+                if (w->right->color == RB_BLACK) {
+                    w->left->color = RB_BLACK;
+                    w->color = RB_RED;
+                    rotate_right(t, w);
+                    w = x->parent->right;
+                }
+                w->color = x->parent->color;
+                x->parent->color = RB_BLACK;
+                w->right->color = RB_BLACK;
+                rotate_left(t, x->parent);
+                x = t->root;
+            }
+        } else {
+            rb_node_t *w = x->parent->left;
+            if (w->color == RB_RED) {
+                w->color = RB_BLACK;
+                x->parent->color = RB_RED;
+                rotate_right(t, x->parent);
+                w = x->parent->left;
+            }
+            if (w->right->color == RB_BLACK && w->left->color == RB_BLACK) {
+                w->color = RB_RED;
+                x = x->parent;
+            } else {
+                if (w->left->color == RB_BLACK) {
+                    w->right->color = RB_BLACK;
+                    w->color = RB_RED;
+                    rotate_left(t, w);
+                    w = x->parent->left;
+                }
+                w->color = x->parent->color;
+                x->parent->color = RB_BLACK;
+                w->left->color = RB_BLACK;
+                rotate_right(t, x->parent);
+                x = t->root;
+            }
+        }
+    }
+    x->color = RB_BLACK;
+}
+
 int rb_delete(rbtree_t *t, const char *key) {
     rb_node_t *z = find_node(t, key);
     if (z == t->nil) return -1;
 
-    if (z->left == t->nil || z->right == t->nil) {
-        /* 0/1-child case: not implemented yet. Leave the tree unchanged. */
-        return -1;
+    rb_node_t *y = z;
+    rb_color_t y_original_color = y->color;
+    rb_node_t *x;
+
+    if (z->left == t->nil) {
+        x = z->right;
+        rb_transplant(t, z, z->right);
+        free(z->key);
+        if (t->value_free) t->value_free(z->value);
+        free(z);
+    } else if (z->right == t->nil) {
+        x = z->left;
+        rb_transplant(t, z, z->left);
+        free(z->key);
+        if (t->value_free) t->value_free(z->value);
+        free(z);
+    } else {
+        /* Two-children case: copy the in-order successor's key/value into z
+         * (z never moves), then splice the successor node out of the tree.
+         * y has at most a right child, since it's a subtree minimum. */
+        y = tree_minimum(t->nil, z->right);
+        y_original_color = y->color;
+        x = y->right;
+
+        free(z->key);
+        if (t->value_free) t->value_free(z->value);
+        z->key = y->key;
+        z->value = y->value;
+        y->key = NULL;
+        y->value = NULL;
+
+        rb_transplant(t, y, x);
+        free(y);
     }
 
-    /* Two-children case: copy the in-order successor's key/value into z
-     * (z never moves), then splice the successor node out of the tree.
-     * y has at most a right child, since it's a subtree minimum. Fixup
-     * is not implemented yet, so this is only correct when y is red. */
-    rb_node_t *y = tree_minimum(t->nil, z->right);
-
-    free(z->key);
-    if (t->value_free) t->value_free(z->value);
-    z->key = y->key;
-    z->value = y->value;
-    y->key = NULL;
-    y->value = NULL;
-
-    rb_node_t *x = y->right;
-    rb_transplant(t, y, x);
-    free(y);
+    if (y_original_color == RB_BLACK) rb_delete_fixup(t, x);
 
     t->size--;
     return 0;
